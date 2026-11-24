@@ -1,0 +1,15 @@
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Python / tool caches
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.venv/
+
+# Large or regenerable data: kept locally, never committed
+data/
+outputs/
+archive/
