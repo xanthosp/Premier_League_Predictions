@@ -26,7 +26,12 @@ long jobs locally).
   - `odds` (long format): bookmaker × market (1x2/ou25/ah) × is_closing × selection × line.
     Sharp closing: **PS** (Pinnacle) up to mid-2025-26, **BFE** (Betfair Exchange) from 2024-25 onward.
     Avg/Max closing from 2019-20 onward. Coverage: `outputs/coverage_football_data.csv`.
-- `pannadata/epl_shots.parquet`: 98,278 EPL shots, 2016–2026, with Opta xG (source: github peteowen1/pannadata).
+- `pannadata/` (github peteowen1/pannadata, Opta): `fixtures.parquet` (all ~100 competitions, also upcoming),
+  `shot_events.parquet` (per-shot xG, our 6 leagues, 2015-16 onward), `player_match_shots.parquet` (player shots/SOT/minutes).
+  Built into `match_xg` (xG, npxG, shots, big chances per side; 23.7k matches linked, 0 score mismatches) and
+  `team_names_opta` (Opta team id → football-data name, paired by date + score).
+- `fpl_api/<UTC stamp>/`: one snapshot of the official FPL API per `update` (injury status, news, chance of playing).
+  Built into `fpl_availability` (history of all snapshots) and `fpl_fixtures` (latest, incl. upcoming, with team names).
 - `fpl_history/`: FPL per-player per-gameweek data, 2019-20..2025-26 (minutes, xG, xA, starts).
 - `transfermarkt/`: player valuations and appearances (Kaggle dcaribou dataset, see its LICENSE).
 - `openfootball/`: EPL results 2022-23..2025-26 (used only by the old baseline).
@@ -34,7 +39,7 @@ long jobs locally).
 ## Commands
 
 ```powershell
-python -m football_ml update     # football-data download + rebuild matches/odds (--offline: rebuild only)
+python -m football_ml update     # all sources + rebuild (--offline: rebuild only, --skip-shots: no pannadata download)
 python -m football_ml prepare    # openfootball -> data/processed + sqlite (old baseline)
 python -m football_ml baseline   # simple walk-forward Poisson
 python -m pytest -q
