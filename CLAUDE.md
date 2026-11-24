@@ -20,7 +20,12 @@ long jobs locally).
 
 ## Raw data (`data/raw/`)
 
-- `football_data/E0/1617..2627_E0.csv`: football-data.co.uk EPL. Results, stats, xG, and opening and closing odds for 1X2, O/U 2.5 and AH (B365, Avg, Max, Betfair Exchange). 2026-27 runs to 01/11/2026.
+- `football_data/<DIV>/<SSSS>_<DIV>.csv`: football-data.co.uk, 6 leagues (E0 EPL, E1 Championship, SP1, D1, I1, F1),
+  2016-17 onward. `update` downloads only missing seasons and the current one. Parsed into the SQLite tables:
+  - `matches` (24k rows): results, shots, corners, cards. xG only from 2026-27.
+  - `odds` (long format): bookmaker × market (1x2/ou25/ah) × is_closing × selection × line.
+    Sharp closing: **PS** (Pinnacle) up to mid-2025-26, **BFE** (Betfair Exchange) from 2024-25 onward.
+    Avg/Max closing from 2019-20 onward. Coverage: `outputs/coverage_football_data.csv`.
 - `pannadata/epl_shots.parquet`: 98,278 EPL shots, 2016–2026, with Opta xG (source: github peteowen1/pannadata).
 - `fpl_history/`: FPL per-player per-gameweek data, 2019-20..2025-26 (minutes, xG, xA, starts).
 - `transfermarkt/`: player valuations and appearances (Kaggle dcaribou dataset, see its LICENSE).
@@ -29,6 +34,7 @@ long jobs locally).
 ## Commands
 
 ```powershell
+python -m football_ml update     # football-data download + rebuild matches/odds (--offline: rebuild only)
 python -m football_ml prepare    # openfootball -> data/processed + sqlite (old baseline)
 python -m football_ml baseline   # simple walk-forward Poisson
 python -m pytest -q

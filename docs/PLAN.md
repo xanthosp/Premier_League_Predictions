@@ -15,7 +15,9 @@
 | # | Φάση | Περιεχόμενο | Κατάσταση |
 |---|---|---|---|
 | 0 | Καθάρισμα | git, δομή, archive, CLAUDE.md | ✅ 24/11/2026 |
-| 1 | Δεδομένα που ανανεώνονται | `python -m football_ml update`: football-data (EPL και άλλες λίγκες για training), FPL API, pannadata shots, καταγραφή αποδόσεων σε σταθερές ώρες. Ενιαίος as-of πίνακας features για 20 ομάδες. | ⏳ |
+| 1α | football-data | 6 λίγκες, 2016→σήμερα, 24.197 αγώνες, πίνακες `matches`/`odds` | ✅ 24/11/2026 |
+| 1β | Σουτ/xG, FPL, ονόματα | pannadata xG για όλες τις λίγκες (το ιστορικό xG λείπει από το football-data), στιγμιότυπα FPL API, αντιστοίχιση ονομάτων ομάδων | ⏳ |
+| 1γ | As-of features | Γκολ/xG με χρονική φθορά και πλήθος αγώνων, Elo, tests κατά του leakage | ⏳ |
 | 2 | Σύστημα αξιολόγησης | Walk-forward με επανεκπαίδευση κάθε εβδομάδα, log loss, RPS, calibration, closing αποδόσεις χωρίς γκανιότα, blend test, `outputs/leaderboard.csv` | ⏳ |
 | 3 | Ξαναχτίσιμο μοντέλων | 1) αγορά 2) Dixon–Coles με χρονική φθορά (γκολ και xG) 3) ratings επίθεσης/άμυνας από xG 4) GBM με ~20–40 features 5) props παικτών (σουτ/σουτ στην εστία από FPL) | ⏳ |
 | 4 | Settlement και forward paper | Βαθμολόγηση των κλειδωμένων προβλέψεων (βλ. `archive/INDEX.md`), paper trading, CLV dashboard | ⏳ |

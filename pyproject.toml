@@ -1,9 +1,9 @@
 [project]
 name = "football-ml"
-version = "0.1.0"
-description = "Premier League goal probability experiments"
+version = "0.2.0"
+description = "Pre-match football probabilities and value research"
 requires-python = ">=3.10"
-dependencies = []
+dependencies = ["pandas>=2.0"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

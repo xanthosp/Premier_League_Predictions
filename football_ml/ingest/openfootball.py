@@ -76,7 +76,7 @@ def prepare(root):
         writer.writeheader()
         writer.writerows(rows)
     with sqlite3.connect(root / "data/football.sqlite") as connection:
-        connection.execute("""CREATE TABLE IF NOT EXISTS matches (
+        connection.execute("""CREATE TABLE IF NOT EXISTS openfootball_matches (
             match_id TEXT PRIMARY KEY, season TEXT NOT NULL, match_date TEXT NOT NULL,
             home_team TEXT NOT NULL, away_team TEXT NOT NULL,
             home_goals INTEGER NOT NULL CHECK(home_goals>=0),
@@ -84,8 +84,8 @@ def prepare(root):
             btts INTEGER NOT NULL CHECK(btts IN (0,1)),
             over25 INTEGER NOT NULL CHECK(over25 IN (0,1)),
             kickoff_local_unverified TEXT, source TEXT NOT NULL)""")
-        connection.execute("DELETE FROM matches")
-        connection.executemany("INSERT INTO matches VALUES (?,?,?,?,?,?,?,?,?,?,?)", [tuple(row[k] for k in FIELDS) for row in rows])
+        connection.execute("DELETE FROM openfootball_matches")
+        connection.executemany("INSERT INTO openfootball_matches VALUES (?,?,?,?,?,?,?,?,?,?,?)", [tuple(row[k] for k in FIELDS) for row in rows])
     profile = {"rows": len(rows), "columns": len(FIELDS), "seasons": season_counts,
                "teams_by_season": teams, "date_min": rows[0]["match_date"], "date_max": rows[-1]["match_date"],
                "null_counts": {key: sum(row[key] is None or row[key] == "" for row in rows) for key in FIELDS},
