@@ -32,6 +32,7 @@ long jobs locally).
   `team_names_opta` (Opta team id → football-data name, paired by date + score).
 - `fpl_api/<UTC stamp>/`: one snapshot of the official FPL API per `update` (injury status, news, chance of playing).
   Built into `fpl_availability` (history of all snapshots) and `fpl_fixtures` (latest, incl. upcoming, with team names).
+- Derived: `features_match` (football_ml/features): one row per match incl. upcoming E0 fixtures, as-of Elo + decayed form.
 - `fpl_history/`: FPL per-player per-gameweek data, 2019-20..2025-26 (minutes, xG, xA, starts).
 - `transfermarkt/`: player valuations and appearances (Kaggle dcaribou dataset, see its LICENSE).
 - `openfootball/`: EPL results 2022-23..2025-26 (used only by the old baseline).
@@ -40,6 +41,7 @@ long jobs locally).
 
 ```powershell
 python -m football_ml update     # all sources + rebuild (--offline: rebuild only, --skip-shots: no pannadata download)
+python -m football_ml features   # rebuild features_match only (update also does it)
 python -m football_ml prepare    # openfootball -> data/processed + sqlite (old baseline)
 python -m football_ml baseline   # simple walk-forward Poisson
 python -m pytest -q

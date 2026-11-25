@@ -2,6 +2,7 @@ import argparse
 import json
 from pathlib import Path
 
+from .features import match_features
 from .ingest import football_data, fpl, pannadata
 from .ingest.api_clients import fetch_api, load_keys
 from .ingest.openfootball import prepare
@@ -20,6 +21,7 @@ def run_update(root: Path, offline: bool = False, skip_shots: bool = False) -> d
     result["matches_odds"] = football_data.build(root)   # must come first: the others link to `matches`
     result["match_xg"] = pannadata.build(root)
     result["fpl"] = fpl.build(root)
+    result["features"] = match_features.build(root)
     return result
 
 
@@ -30,6 +32,7 @@ def main():
     update = commands.add_parser("update", help="Download all sources (football-data, pannadata, FPL) and rebuild the database")
     update.add_argument("--offline", action="store_true", help="Skip downloads; only rebuild from data/raw")
     update.add_argument("--skip-shots", action="store_true", help="Do not re-download the ~120MB pannadata files")
+    commands.add_parser("features", help="Rebuild the as-of table features_match from the database")
     commands.add_parser("prepare", help="Normalize local OpenFootball results into CSV and SQLite")
     commands.add_parser("baseline", help="Run the fixed independent-Poisson baseline chronologically")
     commands.add_parser("status", help="Show dataset and key availability without exposing keys")
@@ -46,6 +49,8 @@ def main():
     try:
         if args.command == "update":
             result = run_update(args.root, offline=args.offline, skip_shots=args.skip_shots)
+        elif args.command == "features":
+            result = match_features.build(args.root)
         elif args.command == "prepare":
             result = prepare(args.root)
             result = {key: result[key] for key in ("rows", "seasons", "teams_by_season", "duplicate_match_keys")}
