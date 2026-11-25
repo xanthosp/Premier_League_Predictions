@@ -3,6 +3,8 @@
 Raw files in data/raw/pannadata/:
 - fixtures.parquet: every competition the release covers (results, kickoff dates, upcoming fixtures)
 - shot_events.parquet: shot events for our leagues only (the full release is ~80MB)
+- lineups.parquet: matchday squads with minutes (starters and bench) for our leagues, European club
+  competitions and domestic cups, used for fixture congestion and player availability
 
 `build()` aggregates shots per team-match, links each Opta match to a football-data match and writes
 the SQLite table `match_xg`. Team names are linked by evidence, not by fuzzy text: two names are paired
@@ -25,6 +27,13 @@ COMPETITIONS = {"EPL": "E0", "Championship": "E1", "La_Liga": "SP1", "Bundesliga
 SHOT_COLUMNS = ["match_id", "event_id", "player_id", "player_name", "team_id", "minute", "second", "x", "y",
                 "is_goal", "body_part", "situation", "big_chance", "competition", "season", "xg", "xgot",
                 "is_own_goal", "is_blocked"]
+# Other competitions our clubs play: they cost rest days and minutes even though we do not model them.
+OTHER_COMPETITIONS = {"UCL": "europe", "UEL": "europe", "Conference_League": "europe", "UEFA_Super_Cup": "europe",
+                      "Club_World_Cup": "europe", "FIFA_Intercontinental_Cup": "europe",
+                      "FA_Cup": "cup", "League_Cup": "cup", "Copa_del_Rey": "cup", "Supercopa": "cup", "DFB_Pokal": "cup",
+                      "Coppa_Italia": "cup", "Coupe_de_France": "cup", "Trophee_Champions": "cup"}
+LINEUP_COLUMNS = ["match_id", "match_date", "player_id", "player_name", "team_id", "position", "is_starter",
+                  "minutes_played", "competition", "season"]
 MIN_PAIR_VOTES = 3
 MIN_PAIR_SHARE = 0.9
 
@@ -40,21 +49,56 @@ def _fetch(name: str, target: Path) -> dict:
 
 
 def download(root: Path) -> dict:
-    """Refresh both files. The shot file is filtered to our competitions before it is stored."""
+    """Refresh all files. Large files are filtered to the competitions we use before they are stored."""
     out = Path(root) / "data/raw/pannadata"
     out.mkdir(parents=True, exist_ok=True)
     manifest = {"fixtures.parquet": _fetch("opta_fixtures", out / "fixtures.parquet")}
     with tempfile.TemporaryDirectory() as tmp:
-        for release_name, stored, columns in (("opta_shot_events", "shot_events.parquet", SHOT_COLUMNS),
-                                              ("opta_shots", "player_match_shots.parquet", None)):
+        for release_name, stored, columns, keep in (
+                ("opta_shot_events", "shot_events.parquet", SHOT_COLUMNS, set(COMPETITIONS)),
+                ("opta_shots", "player_match_shots.parquet", None, set(COMPETITIONS)),
+                ("opta_lineups", "lineups.parquet", LINEUP_COLUMNS, set(COMPETITIONS) | set(OTHER_COMPETITIONS))):
             full = Path(tmp) / f"{release_name}.parquet"
             source = _fetch(release_name, full)
             frame = pd.read_parquet(full, columns=columns)
-            frame = frame[frame.competition.isin(COMPETITIONS)]
+            frame = frame[frame.competition.isin(keep)]
             frame.to_parquet(out / stored, index=False)
-            manifest[stored] = {**source, "stored": f"filtered to {sorted(COMPETITIONS)}", "rows": len(frame)}
+            manifest[stored] = {**source, "stored": f"filtered to {sorted(keep)}", "rows": len(frame)}
     (out / "manifest.json").write_text(json.dumps(manifest, indent=1), encoding="utf-8")
     return {name: entry["downloaded_at_utc"] for name, entry in manifest.items()}
+
+
+def team_schedule(fixtures: pd.DataFrame, mapping: dict) -> pd.DataFrame:
+    """Every played or scheduled match of our clubs in any league, cup or European competition, one row per team.
+
+    kind is "league" for our six leagues, else the OTHER_COMPETITIONS label ("europe"/"cup").
+    """
+    keep = fixtures[fixtures.match_status.isin(["Played", "Awarded", "Fixture"])
+                    & fixtures.competition.isin(set(COMPETITIONS) | set(OTHER_COMPETITIONS))]
+    date = pd.to_datetime(keep.match_date.str.rstrip("Z")).dt.strftime("%Y-%m-%d")
+    rows = [pd.DataFrame({"team": keep[f"{side}_team_id"].map(mapping), "date": date, "competition": keep.competition,
+                          "opta_match_id": keep.match_id, "played": keep.match_status.ne("Fixture")}) for side in ("home", "away")]
+    out = pd.concat(rows).dropna(subset=["team"])
+    out["kind"] = out.competition.map(OTHER_COMPETITIONS).fillna("league")
+    return out.drop_duplicates(["team", "opta_match_id"]).sort_values(["team", "date"]).reset_index(drop=True)
+
+
+def player_minutes(lineups: pd.DataFrame, mapping: dict, shots: pd.DataFrame | None = None) -> pd.DataFrame:
+    """Matchday squads of our clubs: one row per player per match (bench players have 0 minutes), with the
+    player's non-penalty xG in that match (league matches only; 0 elsewhere)."""
+    out = lineups.assign(team=lineups.team_id.map(mapping)).dropna(subset=["team"])
+    out = out.assign(date=pd.to_datetime(out.match_date.str.rstrip("Z")).dt.strftime("%Y-%m-%d"),
+                     minutes=out.minutes_played.fillna(0), kind=out.competition.map(OTHER_COMPETITIONS).fillna("league"))
+    out = out.rename(columns={"match_id": "opta_match_id"})
+    if shots is None:
+        out["npxg"] = 0.0
+    else:
+        open_play = shots[~shots.is_own_goal.fillna(False).astype(bool) & shots.situation.ne("Penalty")]
+        npxg = open_play.groupby(["match_id", "player_id"]).xg.sum().rename("npxg").reset_index()
+        out = out.merge(npxg.rename(columns={"match_id": "opta_match_id"}), how="left", on=["opta_match_id", "player_id"])
+        out["npxg"] = out.npxg.fillna(0.0)
+    return out[["opta_match_id", "date", "competition", "kind", "team", "player_id", "player_name", "position",
+                "is_starter", "minutes", "npxg"]]
 
 
 def load_fixtures(root: Path) -> pd.DataFrame:
@@ -126,7 +170,8 @@ def build(root: Path) -> dict:
         rest = rest[~rest.match_id.isin(extra.match_id)]
     score_mismatch = int(((linked.home_goals != linked.home_goals_fd) | (linked.away_goals != linked.away_goals_fd)).sum())
 
-    shots = team_match_shots(pd.read_parquet(root / "data/raw/pannadata/shot_events.parquet"))
+    raw_shots = pd.read_parquet(root / "data/raw/pannadata/shot_events.parquet")
+    shots = team_match_shots(raw_shots)
     table = linked[["match_id_fd", "match_id", "home_team_id", "away_team_id"]].rename(
         columns={"match_id_fd": "match_id", "match_id": "opta_match_id"})
     for side in ("home", "away"):
@@ -138,10 +183,20 @@ def build(root: Path) -> dict:
     has_shot_data = table.opta_match_id.isin(shots.match_id)
     stats = [f"{side}_{c}" for side in ("home", "away") for c in ("xg", "npxg", "shots", "big_chances", "xg_missing")]
     table.loc[has_shot_data, stats] = table.loc[has_shot_data, stats].fillna(0)
+    all_fixtures = pd.read_parquet(root / "data/raw/pannadata/fixtures.parquet")
+    schedule = team_schedule(all_fixtures, mapping)
+    lineup_file = root / "data/raw/pannadata/lineups.parquet"
+    squads = player_minutes(pd.read_parquet(lineup_file), mapping, raw_shots) if lineup_file.exists() else None
     with sqlite3.connect(root / "data/football.sqlite") as connection:
         table.to_sql("match_xg", connection, if_exists="replace", index=False)
         names.to_sql("team_names_opta", connection, if_exists="replace", index=False)
+        schedule.to_sql("team_schedule", connection, if_exists="replace", index=False)
+        if squads is not None:
+            squads.to_sql("player_minutes", connection, if_exists="replace", index=False)
+            connection.execute("CREATE INDEX IF NOT EXISTS ix_player_minutes ON player_minutes(team, date)")
     with_xg = fd.assign(has_xg=fd.match_id.isin(table.dropna(subset=["home_xg"]).match_id))
     coverage = with_xg.groupby("league").has_xg.mean().round(3).to_dict()
     return {"opta_played": len(played), "linked": len(table), "unlinked_opta": len(rest), "score_mismatch": score_mismatch,
-            "team_names_paired": len(names), "xg_coverage_by_league": coverage}
+            "team_names_paired": len(names), "xg_coverage_by_league": coverage,
+            "schedule_rows_by_kind": schedule.kind.value_counts().to_dict(),
+            "player_minutes_rows": None if squads is None else len(squads)}

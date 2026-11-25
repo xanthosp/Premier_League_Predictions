@@ -27,12 +27,15 @@ long jobs locally).
     Sharp closing: **PS** (Pinnacle) up to mid-2025-26, **BFE** (Betfair Exchange) from 2024-25 onward.
     Avg/Max closing from 2019-20 onward. Coverage: `outputs/coverage_football_data.csv`.
 - `pannadata/` (github peteowen1/pannadata, Opta): `fixtures.parquet` (all ~100 competitions, also upcoming),
-  `shot_events.parquet` (per-shot xG, our 6 leagues, 2015-16 onward), `player_match_shots.parquet` (player shots/SOT/minutes).
+  `shot_events.parquet` (per-shot xG, our 6 leagues, 2015-16 onward), `player_match_shots.parquet` (shooters only), `lineups.parquet` (full matchday squads with minutes for our
+  leagues + European club competitions + domestic cups).
   Built into `match_xg` (xG, npxG, shots, big chances per side; 23.7k matches linked, 0 score mismatches) and
   `team_names_opta` (Opta team id → football-data name, paired by date + score).
 - `fpl_api/<UTC stamp>/`: one snapshot of the official FPL API per `update` (injury status, news, chance of playing).
   Built into `fpl_availability` (history of all snapshots) and `fpl_fixtures` (latest, incl. upcoming, with team names).
-- Derived: `features_match` (football_ml/features): one row per match incl. upcoming E0 fixtures, as-of Elo + decayed form.
+  Also built into `team_schedule` (every match of our clubs in any competition, incl. scheduled) and `player_minutes`.
+- Derived: `features_match` (football_ml/features): one row per match incl. upcoming E0 fixtures, as-of Elo, decayed form,
+  fixture congestion (all competitions) and player availability/load (missing regulars, missing xG share).
 - `fpl_history/`: FPL per-player per-gameweek data, 2019-20..2025-26 (minutes, xG, xA, starts).
 - `transfermarkt/`: player valuations and appearances (Kaggle dcaribou dataset, see its LICENSE).
 - `openfootball/`: EPL results 2022-23..2025-26 (used only by the old baseline).

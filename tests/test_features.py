@@ -62,7 +62,6 @@ def test_decayed_form_weights_by_half_life():
     assert upcoming.gf == pytest.approx((3 * 0.25 + 1 * 0.5) / 0.75)
     assert upcoming.form_weight == pytest.approx(0.75)
     assert upcoming.xgf == pytest.approx(2.0)  # m2 has no xG, so only m1 counts
-    assert upcoming.rest_days == 10
     assert np.isnan(form.loc[("m1", "home")].gf)
 
 
@@ -76,3 +75,29 @@ def test_elo_promoted_team_inherits_relegated_rating_and_starts_at_1500():
     last = out.iloc[-1]
     assert out.home_elo.iloc[0] == elo.START and 0 < last.elo_home_exp < 1
     assert elo.margin_multiplier(1) == 1.0 and elo.margin_multiplier(-3) == 1.75
+
+
+def test_schedule_features_use_all_competitions_but_not_the_match_day():
+    from football_ml.features.schedule import schedule_features
+    schedule = pd.DataFrame({"team": "A", "date": ["2025-01-01", "2025-01-04", "2025-01-07", "2025-01-10"],
+                             "kind": ["league", "europe", "league", "europe"], "played": [True, True, True, False]})
+    target = pd.DataFrame({"match_id": ["m"], "team": ["A"], "date": ["2025-01-07"]})
+    row = schedule_features(target, schedule).iloc[0]
+    assert row.rest_days == 3 and row.prev_europe and row.matches_14d == 2
+    assert row.days_to_next == 3 and row.next_europe
+
+
+def test_player_features_flag_regulars_missing_from_last_league_squad():
+    from football_ml.features.players import player_features
+    squads = pd.DataFrame({
+        "opta_match_id": ["m1", "m1", "m2", "m2", "e1"], "team": "A",
+        "date": ["2025-01-01", "2025-01-01", "2025-01-08", "2025-01-08", "2025-01-11"],
+        "kind": ["league", "league", "league", "league", "europe"], "player_id": ["p1", "p2", "p1", "p3", "p1"],
+        "minutes": [90, 90, 90, 90, 90], "npxg": [0.0, 1.0, 1.0, 0.0, 0.0]})
+    targets = pd.DataFrame({"match_id": ["t1", "t2"], "team": "A", "date": ["2025-01-15", "2025-01-08"]})
+    out = player_features(targets, squads, half_life=1e9).set_index("match_id")
+    assert out.loc["t1", "missing_regulars"] == pytest.approx(0.5)   # p2 played half the minutes, absent in m2
+    assert out.loc["t1", "missing_xg_share"] == pytest.approx(0.5)   # p2 produced half of the xG
+    # window [01-07, 01-15): p1 (weight 1) played m2 and e1, p3 (weight 0.5) played m2 -> (2 + 0.5) / 2
+    assert out.loc["t1", "regulars_load_8d"] == pytest.approx(1.25)
+    assert out.loc["t2", "missing_regulars"] == 0                    # on m2's day only m1 is known

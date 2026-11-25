@@ -38,7 +38,7 @@ def _short(name: str) -> str:
 
 def decayed_form(matches: pd.DataFrame, half_life: float = HALF_LIFE_DAYS) -> pd.DataFrame:
     """One row per (match_id, side) with the decayed mean of each stat over earlier matches, the total
-    weight behind the goal means (`form_weight`, about "number of recent matches") and `rest_days`."""
+    weight behind the goal means (`form_weight`, about "number of recent matches")."""
     rows = team_rows(matches).sort_values(["team", "league", "date"], kind="stable").reset_index(drop=True)
     groups = [rows.team, rows.league]
     days = (rows.date - rows.groupby(groups).date.transform("min")).dt.days.to_numpy(dtype=float)
@@ -59,9 +59,4 @@ def decayed_form(matches: pd.DataFrame, half_life: float = HALF_LIFE_DAYS) -> pd
         if pair == ("gf", "ga"):
             out["form_weight"] = weight
 
-    # Days since the team's previous played match in any of our leagues (cups are not in the data).
-    by_date = rows.sort_values(["team", "date"], kind="stable")
-    played_date = by_date.date.where(by_date.gf.notna())
-    previous = played_date.groupby(by_date.team).shift(1).groupby(by_date.team).ffill()
-    out["rest_days"] = (by_date.date - previous).dt.days.reindex(out.index)
     return out
