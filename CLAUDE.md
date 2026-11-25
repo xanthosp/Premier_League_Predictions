@@ -12,7 +12,7 @@ long jobs locally).
 | `football_ml/` | The only active code. Subpackages: `ingest` → `features` → `models` → `evaluate` → `betting`. |
 | `data/raw/` | Immutable downloads. **Never edit.** Sources are listed below. |
 | `data/processed/`, `data/football.sqlite` | Derived and regenerable. |
-| `outputs/` | Results of new runs. A single `outputs/leaderboard.csv` (to be built in Phase 2). |
+| `outputs/` | Results of new runs: `leaderboard.csv` (one row per evaluation) and `predictions/`. |
 | `tests/` | pytest suite for the active code. |
 | `docs/PLAN.md` | Phased plan and current status. **Read this first when starting new work.** |
 | `docs/DATA_SOURCES.md`, `docs/FREE_API_FINDINGS.md` | Earlier research on free sources. |
@@ -45,6 +45,7 @@ long jobs locally).
 ```powershell
 python -m football_ml update     # all sources + rebuild (--offline: rebuild only, --skip-shots: no pannadata download)
 python -m football_ml features   # rebuild features_match only (update also does it)
+python -m football_ml evaluate --model elo_ordered [--league E1] [--split test --confirm-test]
 python -m football_ml prepare    # openfootball -> data/processed + sqlite (old baseline)
 python -m football_ml baseline   # simple walk-forward Poisson
 python -m pytest -q
@@ -67,6 +68,7 @@ Python 3.12. Libraries available: pandas, numpy, scipy, scikit-learn, xgboost, p
 ## Work conventions
 
 - Don't print or read large CSV/parquet files; summarize them with pandas (shape, head, describe).
-- A new model is a module in `football_ml/models/`, runs through the shared harness, and adds a row to the leaderboard.
+- A new model is a module in `football_ml/models/` with `name`, `params`, `fit(train)`, `predict(test) -> (n,3) H/D/A`,
+  registered in `models/simple.py:MODELS`; `evaluate` runs it walk-forward (football_ml/evaluate) and adds a leaderboard row.
   No new folder per experiment.
 - Short reports. Commit only when the user asks.
