@@ -29,7 +29,9 @@ def load_dataset(root: Path) -> pd.DataFrame:
     """features_match + result + de-vigged market probabilities (close_*, open_*) for every match."""
     with sqlite3.connect(Path(root) / "data/football.sqlite") as connection:
         features = pd.read_sql("SELECT * FROM features_match", connection)
-        results = pd.read_sql("SELECT match_id, fthg, ftag, ftr FROM matches", connection)
+        # Outcomes only (never features): the match's own goals and xG, used as training targets.
+        results = pd.read_sql("SELECT m.match_id, m.fthg, m.ftag, m.ftr, x.home_npxg AS result_home_npxg, "
+                              "x.away_npxg AS result_away_npxg FROM matches m LEFT JOIN match_xg x USING (match_id)", connection)
         odds = pd.read_sql("SELECT match_id, bookmaker, market, is_closing, selection, price FROM odds WHERE market = '1x2'",
                            connection)
     data = features.merge(results, on="match_id", how="left")
@@ -53,6 +55,8 @@ def weekly_folds(data: pd.DataFrame, league: str, split: str):
 
 def walk_forward(model, data: pd.DataFrame, league: str, split: str, train_leagues: list[str] | None = None) -> pd.DataFrame:
     predictions = []
+    if hasattr(model, "league"):  # single-league models (Dixon-Coles) filter their own training data
+        model.league = league
     for train, test in weekly_folds(data, league, split):
         if train_leagues is not None:
             train = train[train.league.isin(train_leagues)]

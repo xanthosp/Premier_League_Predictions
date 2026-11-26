@@ -64,5 +64,25 @@ class Market:
         return p
 
 
-MODELS = {"base_rates": BaseRates, "elo_ordered": EloOrdered,
-          "market_open": lambda: Market("open"), "market_close": lambda: Market("close")}
+def _registry():
+    from .dixon_coles import DixonColes
+    from .ml import GROUPS, Logistic, PoissonGLM, XGBoost
+    from .ensemble import Ensemble
+
+    def glm():
+        return PoissonGLM(drop="goals")
+
+    def dc_mix():
+        return DixonColes("mix")
+    return {"base_rates": BaseRates, "elo_ordered": EloOrdered,
+            "market_open": lambda: Market("open"), "market_close": lambda: Market("close"),
+            "dixon_coles": DixonColes, "dixon_coles_npxg": lambda: DixonColes("npxg"), "dixon_coles_mix": lambda: DixonColes("mix"),
+            "poisson_glm": PoissonGLM, "logistic": Logistic, "xgboost": XGBoost,
+            **{f"poisson_glm-no_{g}": (lambda g=g: PoissonGLM(drop=g)) for g in GROUPS},
+            **{f"poisson_glm-no_goals-a{a}": (lambda a=a: PoissonGLM(alpha=a, drop="goals")) for a in (0.3, 3.0)},
+            "ens_glm_dc": lambda: Ensemble("ens_glm_dc", [glm, dc_mix]),
+            "ens_glm_dc_logit": lambda: Ensemble("ens_glm_dc_logit", [glm, dc_mix, Logistic]),
+            "ens_all": lambda: Ensemble("ens_all", [glm, dc_mix, lambda: DixonColes("npxg"), Logistic, XGBoost])}
+
+
+MODELS = _registry()
