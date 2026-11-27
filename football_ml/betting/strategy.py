@@ -38,6 +38,7 @@ STRATEGIES = {
     "stack_p10": ("stack", 0.03, True, None, False, False),
     "stack_p10_odds4": ("stack", 0.03, True, 4.0, False, False),
     "move_clv1": ("move", 0.01, False, None, False, False),          # bet where the close is expected to beat our price
+    "consensus_ev1": ("market", 0.01, False, None, False, False),    # bet where our price beats the de-vigged open (Phase 5)
     "stack_p10_move": ("stack", 0.03, True, None, True, False),
     "stack_p10_move_scaled": ("stack", 0.03, True, None, True, True),
 }
@@ -231,7 +232,7 @@ def run_strategies(frame: pd.DataFrame, close_matrix: np.ndarray, price_frames: 
         cur = frame[now].reset_index(drop=True)
         base = market_matrix(cur)
         matrices = {"stack": tilted(cur, *stack_rates(cur, coef), base),
-                    "blend": policy.decision_matrix(cur, w)}
+                    "blend": policy.decision_matrix(cur, w), "market": base}
         matrices["move"] = move_matrix(cur, move, base)[0]
         boot_m = [tilted(cur, *stack_rates(cur, c), base) for c in boots]
         cm = close_matrix[now]

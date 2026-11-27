@@ -97,3 +97,30 @@ def test_price_card_and_move_model_round_trip():
 def payoff_ev(matrix, price):
     from football_ml.betting.markets import expected_profit
     return expected_profit(matrix, "ah", "H", np.array([-0.25]), np.array([price]))[0]
+
+
+def test_ledger_append_keeps_header_order_and_refuses_new_columns(tmp_path):
+    from football_ml.betting import paper
+    path = tmp_path / "cards.csv"
+    paper._append(path, pd.DataFrame({"a": [1], "betano": [2.0], "pinnacle": [3.0]}))
+    paper._append(path, pd.DataFrame({"pinnacle": [5.0], "a": [4], "betano": [6.0]}))
+    assert pd.read_csv(path).to_dict("list") == {"a": [1, 4], "betano": [2.0, 6.0], "pinnacle": [3.0, 5.0]}
+    with pytest.raises(ValueError):
+        paper._append(path, pd.DataFrame({"a": [7], "new": [1]}))
+
+
+def test_odds_api_parse_maps_names_and_selections(tmp_path):
+    import json
+    from football_ml.ingest import odds_api
+    event = {"home_team": "Manchester United", "away_team": "Brentford", "commence_time": "2026-11-28T15:00:00Z",
+             "bookmakers": [{"key": "pinnacle", "markets": [
+                 {"key": "h2h", "outcomes": [{"name": "Manchester United", "price": 2.1}, {"name": "Draw", "price": 3.6},
+                                             {"name": "Brentford", "price": 3.5}]},
+                 {"key": "totals", "outcomes": [{"name": "Over", "price": 1.6, "point": 2.5},
+                                                {"name": "Under", "price": 2.4, "point": 2.5}]}]}]}
+    path = tmp_path / "20261128T0900Z.json"
+    path.write_text(json.dumps([event]), encoding="utf-8")
+    odds = odds_api.parse(path)
+    assert set(odds.match_id) == {"E0_20261128_ManUnited_Brentford"}
+    wide = odds_api.wide_for_card(odds).set_index(["market", "selection"]).pinnacle
+    assert wide[("1x2", "H")] == 2.1 and wide[("1x2", "A")] == 3.5 and wide[("ou25", "U")] == 2.4

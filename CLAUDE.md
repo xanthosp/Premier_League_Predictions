@@ -35,8 +35,16 @@ long jobs locally).
   `update` when changed. Paper bets are locked at these prices.
 - Paper ledger `outputs/paper/` (append-only, not regenerable, never rewrite): `forecasts.csv`, `bets.csv`, `settlements.csv`,
   `cards.csv` (fair and minimum acceptable price of every selection, for manual comparison with Stoiximan/Superbet),
+  `sheets/<stamp>.csv` (one per lock; the user fills stoiximan/superbet/bet365/novibet prices, placed_book, stake;
+  `my_prices` in `paper` scores them -> `my_prices_report.csv`),
   plus `policy.json` (strategy move_clv1, movement-model coefficients, stakes), `report.csv`.
   Decision rule: `football_ml/betting/strategy.py` (move_clv1: bet where the Mine price beats the predicted close by ≥1%).
+  In parallel (same ledger, `strategy` column in bets.csv; card in `cards_consensus.csv`, consensus_* columns on sheets):
+  consensus_ev1 = Mine price ≥1% above the de-vigged Avg open (Phase 5 ablation; validation only). Ledger files keep
+  their header: `_append` refuses new columns.
+- `odds_api/<UTC stamp>.json`: The Odds API (`football_ml/ingest/odds_api.py`), EPL h2h + totals, regions eu+uk
+  (Pinnacle, Betfair, Betano UK ...; no bet365/Stoiximan/Superbet). 4 credits per call of 500/month; only called
+  when an EPL match is within 2 days. Key only in `.env`.
 - `fpl_api/<UTC stamp>/`: one snapshot of the official FPL API per `update` (injury status, news, chance of playing).
   Built into `fpl_availability` (history of all snapshots) and `fpl_fixtures` (latest, incl. upcoming, with team names).
   Also built into `team_schedule` (every match of our clubs in any competition, incl. scheduled) and `player_minutes`.
@@ -52,6 +60,7 @@ long jobs locally).
 python -m football_ml update     # all sources + rebuild (--offline: rebuild only, --skip-shots: no pannadata download)
 python -m football_ml features   # rebuild features_match only (update also does it)
 python -m football_ml evaluate --model elo_ordered [--league E1] [--split test --confirm-test]
+python -m football_ml daily      # scheduled task (10:00): update + Odds API snapshot + paper; log in outputs/paper/daily_log/
 python -m football_ml paper      # daily: settle finished bets, lock today's/tomorrow's EPL bets, report (outputs/paper/)
 python -m football_ml paper --fit-policy # fit the forward rule (move_clv1: movement model) -> outputs/paper/policy.json; rerun every few weeks
 python -m football_ml paper --backtest   # original blend-rule backtest 2018-19..2022-23 (writes backtest_matches.csv)

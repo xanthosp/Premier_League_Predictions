@@ -1,11 +1,12 @@
 import argparse
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 from .betting import paper
 from .evaluate.walkforward import SPLITS, evaluate
 from .features import match_features
-from .ingest import football_data, fpl, pannadata
+from .ingest import football_data, fpl, odds_api, pannadata
 from .ingest.api_clients import fetch_api, load_keys
 from .ingest.openfootball import prepare
 from .models.baseline_poisson import run_baseline
@@ -36,6 +37,8 @@ def main():
     update = commands.add_parser("update", help="Download all sources (football-data, pannadata, FPL) and rebuild the database")
     update.add_argument("--offline", action="store_true", help="Skip downloads; only rebuild from data/raw")
     update.add_argument("--skip-shots", action="store_true", help="Do not re-download the ~120MB pannadata files")
+    daily = commands.add_parser("daily", help="update + Odds API snapshot + paper (settle, lock, report); log in outputs/paper/daily_log")
+    daily.add_argument("--skip-shots", action="store_true", help="Do not re-download the pannadata files")
     commands.add_parser("features", help="Rebuild the as-of table features_match from the database")
     ev = commands.add_parser("evaluate", help="Walk-forward evaluation of one model; appends a row to outputs/leaderboard.csv")
     ev.add_argument("--model", choices=sorted(MODELS), required=True)
@@ -65,6 +68,13 @@ def main():
     try:
         if args.command == "update":
             result = run_update(args.root, offline=args.offline, skip_shots=args.skip_shots)
+        elif args.command == "daily":
+            result = {"update": run_update(args.root, skip_shots=args.skip_shots), "odds_api": odds_api.snapshot(args.root),
+                      "paper": paper.run(args.root)}
+            log = args.root / "outputs/paper/daily_log"
+            log.mkdir(parents=True, exist_ok=True)
+            stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%MZ")
+            (log / f"{stamp}.json").write_text(json.dumps(result, indent=1, ensure_ascii=False, default=str), encoding="utf-8")
         elif args.command == "features":
             result = match_features.build(args.root)
         elif args.command == "evaluate":

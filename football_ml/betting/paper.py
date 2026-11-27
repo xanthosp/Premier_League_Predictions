@@ -22,17 +22,21 @@ import numpy as np
 import pandas as pd
 
 from ..evaluate.walkforward import FIRST_TRAIN_SEASON, _git_commit, load_dataset, weekly_folds
+from ..ingest import odds_api
 from ..ingest.football_data import parse_fixtures
 from ..models.ml import PoissonGLM
 from . import policy
-from .markets import market_matrix, market_prices, market_rates, over_probability
+from .markets import market_matrix, market_prices, market_rates, over_probability, payoff
 
 LEAGUE = "E0"
 BACKTEST_SEASONS = ("2018-19", "2022-23")
 TEST_SEASONS = ("2023-24", "2025-26")
 # Fixed before the test seasons were seen (validation, "Mine" prices): main candidate first.
 TEST_CANDIDATES = ("move_clv1", "stack_p10_move")
+API_BOOKS = ("pinnacle", "betano")              # from the Odds API, filled automatically on the sheet
+USER_BOOKS = ("stoiximan", "superbet", "bet365", "novibet")  # filled by hand on the sheet
 FORWARD_STRATEGY = "move_clv1"  # test 2023-26: CLV +0.9% ± 1.1, skill +5.3% (docs/PLAN.md)
+PARALLEL_STRATEGY = "consensus_ev1"  # Phase 5 ablation (validation only, test already spent): locked in parallel
 
 
 def _folder(root: Path) -> Path:
@@ -238,8 +242,16 @@ def confirm_test(root: Path, confirm: bool = False) -> dict:
 
 
 def _append(path: Path, rows: pd.DataFrame) -> None:
-    if len(rows):
-        rows.to_csv(path, mode="a", header=not path.exists(), index=False)
+    """Append to a ledger file in the column order of its existing header (a new column would misalign it)."""
+    if not len(rows):
+        return
+    if path.exists():
+        header = pd.read_csv(path, nrows=0).columns.tolist()
+        extra = sorted(set(rows.columns) - set(header))
+        if extra:
+            raise ValueError(f"{path.name}: new columns {extra}; ledger files keep their header, write them elsewhere")
+        rows = rows.reindex(columns=header)
+    rows.to_csv(path, mode="a", header=not path.exists(), index=False)
 
 
 def _read(path: Path) -> pd.DataFrame:
@@ -301,23 +313,107 @@ def lock(root: Path, today: date | None = None) -> dict:
     forecasts = frame[["match_id", "date", "home_team", "away_team", "model_lh", "model_la", "market_lh", "market_la"]].assign(
         pred_d_sup=d[:, 0], pred_d_tot=d[:, 1], p_H=p[:, 0], p_D=p[:, 1], p_A=p[:, 2], p_over25=over_probability(m),
         strategy=config["strategy"], locked_utc=stamp, snapshot=snapshots[-1].name, commit=_git_commit(root)).round(4)
-    cand = strategy.candidates(prices, m)
-    cand = cand[cand.ev >= config["min_ev"]].drop(columns="row").reset_index(drop=True)
-    bets = cand.assign(book=cand.market.map({"1x2": "B365/BW", "ou25": "B365", "ah": "B365"}), stake=config["stake"],
-                       kelly_stake=np.minimum(config["kelly_fraction"] * cand.ev.clip(lower=0) / (cand.price - 1)
-                                              * config["bankroll"], config["kelly_cap"]).round(2), locked_utc=stamp)
-    bets.insert(0, "bet_id", bets.match_id + "|" + bets.market + "|" + bets.selection)
-    # Price card: fair and minimum acceptable price of every selection, to compare with any bookmaker by hand.
-    card = strategy.price_card(prices, m, config["min_ev"]).round(3)
-    card["bet"] = (card.match_id + "|" + card.market + "|" + card.selection).isin(bets.bet_id)
-    card = frame[["match_id", "date", "home_team", "away_team"]].merge(card, on="match_id").assign(locked_utc=stamp)
+    # Two rules in parallel ledgers: the forward rule (predicted close) and the consensus rule (de-vigged open,
+    # Phase 5: CLV +4.7% vs +2.9% on validation, untested). Same prices and stakes; bets.csv has a strategy column.
+    matrices = {config["strategy"]: m, PARALLEL_STRATEGY: market_matrix(frame)}
+    bets, cards = [], {}
+    for name, matrix in matrices.items():
+        min_ev = config["min_ev"] if name == config["strategy"] else strategy.STRATEGIES[name][1]
+        cand = strategy.candidates(prices, matrix)
+        cand = cand[cand.ev >= min_ev].drop(columns="row").reset_index(drop=True)
+        b = cand.assign(strategy=name, book=cand.market.map({"1x2": "B365/BW", "ou25": "B365", "ah": "B365"}),
+                        stake=config["stake"], locked_utc=stamp,
+                        kelly_stake=np.minimum(config["kelly_fraction"] * cand.ev.clip(lower=0) / (cand.price - 1)
+                                               * config["bankroll"], config["kelly_cap"]).round(2))
+        b.insert(0, "bet_id", name + "|" + b.match_id + "|" + b.market + "|" + b.selection)
+        bets.append(b)
+        # Price card: fair and minimum acceptable price of every selection, to compare with any bookmaker by hand.
+        c = strategy.price_card(prices, matrix, min_ev).round(3)
+        c["bet"] = (name + "|" + c.match_id + "|" + c.market + "|" + c.selection).isin(b.bet_id)
+        cards[name] = frame[["match_id", "date", "home_team", "away_team"]].merge(c, on="match_id").assign(locked_utc=stamp)
+    bets = pd.concat(bets, ignore_index=True)
+    card, consensus = cards[config["strategy"]], cards[PARALLEL_STRATEGY]
+    # Pinnacle / Betano UK (Stoiximan's group) at lock time, from today's Odds API snapshot when there is one.
+    api = odds_api.latest(root)
+    if len(api) and api.snapshot.iloc[0][:8] == datetime.now(timezone.utc).strftime("%Y%m%d"):
+        card = card.merge(odds_api.wide_for_card(api), on=["match_id", "market", "selection"], how="left")
+    for book in API_BOOKS:
+        if book not in card:
+            card[book] = np.nan
     _append(folder / "forecasts.csv", forecasts)
     _append(folder / "bets.csv", bets)
     _append(folder / "cards.csv", card)
+    _append(folder / "cards_consensus.csv", consensus)
+    key = ["match_id", "market", "selection"]
+    card = card.merge(consensus[key + ["fair_price", "min_price", "bet"]].rename(
+        columns={"fair_price": "consensus_fair", "min_price": "consensus_min", "bet": "bet_consensus"}), on=key, how="left")
+    _write_sheet(folder, card, stamp)
     show = card.assign(match=card.home_team + " - " + card.away_team)
-    return {"locked": len(forecasts), "bets": bets[["match_id", "market", "selection", "line", "price", "ev"]].round(3).to_dict("records"),
-            "card": show[["match", "market", "selection", "line", "fair_price", "min_price", "our_price", "bet"]].to_dict("records"),
+    return {"locked": len(forecasts),
+            "bets": bets[["strategy", "match_id", "market", "selection", "line", "price", "ev"]].round(3).to_dict("records"),
+            "card": show[["match", "market", "selection", "line", "fair_price", "min_price", "consensus_min", "our_price",
+                          "bet", "bet_consensus"]].to_dict("records"),
             "no_prices": sorted(set(target.match_id) - set(frame.match_id)), "missing_features": missing}
+
+
+def _write_sheet(folder: Path, card: pd.DataFrame, stamp: str) -> Path:
+    """A sheet for the user: fill the prices seen at your bookmakers (and placed_book/stake if you bet).
+    `my_prices` reads every sheet back and measures each bookmaker against the predicted and the real close."""
+    sheet = card.assign(match=card.home_team + " - " + card.away_team)[
+        ["match_id", "date", "match", "market", "selection", "line", "fair_price", "min_price", "consensus_fair",
+         "consensus_min", "our_price", *API_BOOKS, "bet", "bet_consensus"]]
+    sheet = sheet.rename(columns={"our_price": "b365_bw"}).assign(**{b: np.nan for b in USER_BOOKS}, placed_book="", stake=np.nan)
+    path = folder / "sheets" / f"{stamp[:16].replace(':', '').replace('-', '')}.csv"
+    path.parent.mkdir(exist_ok=True)
+    sheet.to_csv(path, index=False)
+    return path
+
+
+def my_prices(root: Path) -> dict:
+    """Every price filled in outputs/paper/sheets/*.csv (plus our B365/bwin, Pinnacle and Betano columns for
+    comparison): expected profit against the predicted close, and once the match is played, CLV against the real
+    close and the profit of what was placed. Per bookmaker: does it beat the minimum price, and the close?"""
+    root = Path(root)
+    folder = _folder(root)
+    sheets = sorted((folder / "sheets").glob("*.csv"))
+    if not sheets:
+        return {"prices": 0}
+    rows = pd.concat([pd.read_csv(f).assign(sheet=f.name) for f in sheets], ignore_index=True)
+    books = [b for b in ("b365_bw", *API_BOOKS, *USER_BOOKS) if b in rows]
+    long = rows.melt(id_vars=["match_id", "match", "market", "selection", "line", "fair_price", "min_price",
+                              "placed_book", "stake", "sheet"], value_vars=books, var_name="bookmaker", value_name="price")
+    long = long.dropna(subset=["price"]).drop_duplicates(["match_id", "market", "selection", "bookmaker"], keep="last")
+    if long.empty:
+        return {"prices": 0}
+    long = long.reset_index(drop=True)
+    # Expected profit is linear in the price: 0 at the fair price, min_ev at the minimum price.
+    long["ev_vs_predicted_close"] = 0.01 * (long.price - long.fair_price) / (long.min_price - long.fair_price)
+    long["beats_min"] = long.price >= long.min_price
+    if {"consensus_fair", "consensus_min"} <= set(rows):  # sheets from before the parallel rule lack these
+        cons = rows.drop_duplicates(["match_id", "market", "selection"], keep="last")[
+            ["match_id", "market", "selection", "consensus_fair", "consensus_min"]]
+        long = long.merge(cons, on=["match_id", "market", "selection"], how="left")
+        long["ev_vs_consensus"] = 0.01 * (long.price - long.consensus_fair) / (long.consensus_min - long.consensus_fair)
+        long = long.drop(columns=["consensus_fair", "consensus_min"])
+    with sqlite3.connect(root / "data/football.sqlite") as connection:
+        results = pd.read_sql("SELECT match_id, fthg, ftag FROM matches", connection)
+    played = long.merge(results, on="match_id", how="inner").reset_index(drop=True)
+    long["clv"], long["profit"] = np.nan, np.nan
+    if len(played):
+        close = market_prices(_odds(root), True, policy.CLOSE_BOOKS)
+        clv = policy.evaluate_bets(_close_matrix(played, close), played)
+        placed = (played.placed_book.astype(str).str.lower() == played.bookmaker) & played.stake.notna()
+        unit = np.array([float(payoff(r.market, r.selection, r.line, r.price, r.fthg, r.ftag)) for r in played.itertuples()])
+        key = ["match_id", "market", "selection", "bookmaker"]
+        extra = played[key].assign(clv=clv, profit=np.where(placed, unit * played.stake.fillna(0), np.nan))
+        long = long.drop(columns=["clv", "profit"]).merge(extra, on=key, how="left")
+    long.to_csv(folder / "my_prices_report.csv", index=False)
+    g = long.groupby("bookmaker")
+    table = pd.DataFrame({"prices": g.size(), "beats_min": g.beats_min.mean(), "ev_vs_predicted_close": g.ev_vs_predicted_close.mean(),
+                          "settled": g.clv.count(), "clv": g.clv.mean(), "placed": g.profit.count(), "profit": g.profit.sum()})
+    if "ev_vs_consensus" in long:
+        table.insert(3, "ev_vs_consensus", g.ev_vs_consensus.mean())
+    return {"by_bookmaker": table.round(4).reset_index().to_dict("records")}
 
 
 def settle_open(root: Path) -> dict:
@@ -346,16 +442,17 @@ def report(root: Path) -> dict:
     if bets.empty or done.empty:
         return {"settled_bets": 0, "open_bets": len(bets)}
     merged = bets.merge(done, on="bet_id")
+    merged["strategy"] = merged.strategy.fillna(FORWARD_STRATEGY) if "strategy" in merged else FORWARD_STRATEGY
     match_dates = pd.to_datetime(merged.match_id.str.split("_").str[1], format="%Y%m%d")
     merged["week"] = (match_dates - pd.to_timedelta(match_dates.dt.weekday, unit="D")).dt.strftime("%Y-%m-%d")
-    weekly = _summary(merged, ["week"])
-    weekly["cum_profit"] = weekly.profit.cumsum()
-    weekly["cum_kelly_profit"] = weekly.kelly_profit.cumsum()
+    weekly = _summary(merged, ["strategy", "week"])
+    weekly["cum_profit"] = weekly.groupby("strategy").profit.cumsum()
+    weekly["cum_kelly_profit"] = weekly.groupby("strategy").kelly_profit.cumsum()
     weekly.to_csv(folder / "report.csv", index=False)
-    total = _summary(merged.assign(all="all"), ["all"]).drop(columns="all").to_dict("records")[0]
-    return {"total": total, "by_market": _summary(merged, ["market"]).to_dict("records"),
+    return {"by_strategy": _summary(merged, ["strategy"]).to_dict("records"),
+            "by_market": _summary(merged, ["strategy", "market"]).to_dict("records"),
             "last_weeks": weekly.tail(4).to_dict("records"), "open_bets": len(bets) - len(merged)}
 
 
 def run(root: Path) -> dict:
-    return {"settle": settle_open(root), "lock": lock(root), "report": report(root)}
+    return {"settle": settle_open(root), "lock": lock(root), "report": report(root), "my_prices": my_prices(root)}
