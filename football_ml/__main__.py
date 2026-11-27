@@ -2,6 +2,7 @@ import argparse
 import json
 from pathlib import Path
 
+from .betting import paper
 from .evaluate.walkforward import SPLITS, evaluate
 from .features import match_features
 from .ingest import football_data, fpl, pannadata
@@ -20,6 +21,7 @@ def run_update(root: Path, offline: bool = False, skip_shots: bool = False) -> d
         if not skip_shots:
             result["pannadata_downloaded"] = pannadata.download(root)
         result["fpl_snapshot"] = fpl.snapshot(root)
+        result["fixtures_snapshot"] = football_data.snapshot_fixtures(root)
     result["matches_odds"] = football_data.build(root)   # must come first: the others link to `matches`
     result["match_xg"] = pannadata.build(root)
     result["fpl"] = fpl.build(root)
@@ -41,6 +43,12 @@ def main():
     ev.add_argument("--split", choices=sorted(SPLITS), default="validation")
     ev.add_argument("--train-leagues", help="Comma-separated leagues to train on (default: the evaluated league)")
     ev.add_argument("--confirm-test", action="store_true", help="Required for the test split (final candidates only)")
+    paper_cmd = commands.add_parser("paper", help="Paper trading: settle finished bets, lock today's/tomorrow's EPL bets, report")
+    paper_cmd.add_argument("--backtest", action="store_true", help="Backtest the original blend rule (2018-19..2022-23) and write backtest_matches.csv")
+    paper_cmd.add_argument("--strategies", action="store_true", help="Compare the strategy menu by CLV (after --backtest)")
+    paper_cmd.add_argument("--fit-policy", action="store_true", help="Fit the forward rule (move_clv1) and write policy.json")
+    paper_cmd.add_argument("--test", action="store_true", help="One-time check of the chosen strategies on 2023-24..2025-26")
+    paper_cmd.add_argument("--confirm-test", action="store_true", help="Required with --test")
     commands.add_parser("prepare", help="Normalize local OpenFootball results into CSV and SQLite")
     commands.add_parser("baseline", help="Run the fixed independent-Poisson baseline chronologically")
     commands.add_parser("status", help="Show dataset and key availability without exposing keys")
@@ -62,6 +70,10 @@ def main():
         elif args.command == "evaluate":
             leagues = args.train_leagues.split(",") if args.train_leagues else [args.league]
             result = evaluate(args.root, MODELS[args.model](), args.league, args.split, leagues, args.confirm_test)
+        elif args.command == "paper":
+            result = (paper.backtest(args.root) if args.backtest else paper.strategies(args.root) if args.strategies
+                      else paper.confirm_test(args.root, args.confirm_test) if args.test
+                      else paper.fit_policy(args.root) if args.fit_policy else paper.run(args.root))
         elif args.command == "prepare":
             result = prepare(args.root)
             result = {key: result[key] for key in ("rows", "seasons", "teams_by_season", "duplicate_match_keys")}

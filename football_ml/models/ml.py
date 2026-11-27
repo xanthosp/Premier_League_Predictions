@@ -52,9 +52,13 @@ class PoissonGLM:
         self.home = _linear(PoissonRegressor(alpha=self.params["alpha"], max_iter=300)).fit(x, train.fthg)
         self.away = _linear(PoissonRegressor(alpha=self.params["alpha"], max_iter=300)).fit(x, train.ftag)
 
-    def predict(self, test: pd.DataFrame) -> np.ndarray:
+    def rates(self, test: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
+        """Expected goals (home, away): the full scoreline matrix, used for every betting market."""
         x = design(test)[self.columns]
-        return outcome_probabilities(self.home.predict(x), self.away.predict(x))
+        return self.home.predict(x), self.away.predict(x)
+
+    def predict(self, test: pd.DataFrame) -> np.ndarray:
+        return outcome_probabilities(*self.rates(test))
 
 
 class Logistic:

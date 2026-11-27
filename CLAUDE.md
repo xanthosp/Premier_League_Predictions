@@ -31,6 +31,12 @@ long jobs locally).
   leagues + European club competitions + domestic cups).
   Built into `match_xg` (xG, npxG, shots, big chances per side; 23.7k matches linked, 0 score mismatches) and
   `team_names_opta` (Opta team id → football-data name, paired by date + score).
+- `football_data/fixtures/<UTC stamp>.csv`: fixtures.csv snapshots (upcoming matches with pre-match prices), saved by
+  `update` when changed. Paper bets are locked at these prices.
+- Paper ledger `outputs/paper/` (append-only, not regenerable, never rewrite): `forecasts.csv`, `bets.csv`, `settlements.csv`,
+  `cards.csv` (fair and minimum acceptable price of every selection, for manual comparison with Stoiximan/Superbet),
+  plus `policy.json` (strategy move_clv1, movement-model coefficients, stakes), `report.csv`.
+  Decision rule: `football_ml/betting/strategy.py` (move_clv1: bet where the Mine price beats the predicted close by ≥1%).
 - `fpl_api/<UTC stamp>/`: one snapshot of the official FPL API per `update` (injury status, news, chance of playing).
   Built into `fpl_availability` (history of all snapshots) and `fpl_fixtures` (latest, incl. upcoming, with team names).
   Also built into `team_schedule` (every match of our clubs in any competition, incl. scheduled) and `player_minutes`.
@@ -46,6 +52,11 @@ long jobs locally).
 python -m football_ml update     # all sources + rebuild (--offline: rebuild only, --skip-shots: no pannadata download)
 python -m football_ml features   # rebuild features_match only (update also does it)
 python -m football_ml evaluate --model elo_ordered [--league E1] [--split test --confirm-test]
+python -m football_ml paper      # daily: settle finished bets, lock today's/tomorrow's EPL bets, report (outputs/paper/)
+python -m football_ml paper --fit-policy # fit the forward rule (move_clv1: movement model) -> outputs/paper/policy.json; rerun every few weeks
+python -m football_ml paper --backtest   # original blend-rule backtest 2018-19..2022-23 (writes backtest_matches.csv)
+python -m football_ml paper --strategies # compare the strategy menu (betting/strategy.py) by CLV, after --backtest
+python -m football_ml paper --test --confirm-test  # ONE-TIME check on 2023-26 (already used on 26/11/2026; refuses to rerun)
 python -m football_ml prepare    # openfootball -> data/processed + sqlite (old baseline)
 python -m football_ml baseline   # simple walk-forward Poisson
 python -m pytest -q

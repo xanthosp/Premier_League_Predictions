@@ -102,11 +102,20 @@ def parse_file(path: Path) -> tuple[pd.DataFrame, pd.DataFrame]:
     for source, target in STAT_COLUMNS.items():
         matches[target] = frame[source] if source in frame else None
     matches["source_file"] = path.name
-    matches.insert(0, "match_id", div + "_" + dates.dt.strftime("%Y%m%d") + "_"
-                   + matches.home_team.str.replace(" ", "") + "_" + matches.away_team.str.replace(" ", ""))
+    matches.insert(0, "match_id", make_match_ids(div, dates, matches.home_team, matches.away_team))
     if matches.match_id.duplicated().any():
         raise ValueError(f"{path.name}: duplicate match ids {matches.match_id[matches.match_id.duplicated()].tolist()[:3]}")
 
+    return matches[MATCH_FIELDS].reset_index(drop=True), parse_odds(frame, matches.match_id)
+
+
+def make_match_ids(div, dates: pd.Series, home: pd.Series, away: pd.Series) -> pd.Series:
+    return (div + "_" + dates.dt.strftime("%Y%m%d") + "_" + home.str.strip().str.replace(" ", "")
+            + "_" + away.str.strip().str.replace(" ", ""))
+
+
+def parse_odds(frame: pd.DataFrame, match_ids: pd.Series) -> pd.DataFrame:
+    """Every bookmaker price column of a raw football-data frame, in the long `odds` format."""
     pieces = []
     lines = {False: frame.get("AHh", frame.get("BbAHh")), True: frame.get("AHCh")}
     for column in frame.columns:
@@ -119,13 +128,14 @@ def parse_file(path: Path) -> tuple[pd.DataFrame, pd.DataFrame]:
             line = pd.to_numeric(lines[closing], errors="coerce") if lines[closing] is not None else pd.Series(float("nan"), index=frame.index)
         else:
             line = pd.Series(2.5 if market == "ou25" else float("nan"), index=frame.index)
-        piece = pd.DataFrame({"match_id": matches.match_id, "bookmaker": bookmaker, "market": market,
+        piece = pd.DataFrame({"match_id": match_ids, "bookmaker": bookmaker, "market": market,
                               "is_closing": int(closing), "selection": selection, "line": line, "price": prices})
         pieces.append(piece[piece.price > 1.0])
-    odds = pd.concat(pieces, ignore_index=True) if pieces else pd.DataFrame()
+    if not pieces:
+        return pd.DataFrame(columns=["match_id", "bookmaker", "market", "is_closing", "selection", "line", "price"])
+    odds = pd.concat(pieces, ignore_index=True)
     # A bookmaker alias (e.g. P and PS) can appear twice for the same cell; keep the first.
-    odds = odds.drop_duplicates(["match_id", "bookmaker", "market", "is_closing", "selection"])
-    return matches[MATCH_FIELDS].reset_index(drop=True), odds
+    return odds.drop_duplicates(["match_id", "bookmaker", "market", "is_closing", "selection"])
 
 
 def _manifest_path(root: Path) -> Path:
@@ -166,6 +176,41 @@ def download(root: Path, leagues=LEAGUES, first_season: int = FIRST_SEASON, toda
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
     manifest_path.write_text(json.dumps(dict(sorted(manifest.items())), indent=1), encoding="utf-8")
     return log
+
+
+FIXTURES_URL = "https://www.football-data.co.uk/fixtures.csv"
+
+
+def snapshot_fixtures(root: Path) -> dict:
+    """Save fixtures.csv (upcoming matches with the current pre-match prices) as a new timestamped raw file,
+    only when its content changed since the last snapshot. These are the prices the paper bets are placed at."""
+    folder = Path(root) / "data/raw/football_data/fixtures"
+    request = Request(FIXTURES_URL, headers={"User-Agent": "football-ml-research/0.2"})
+    try:
+        with urlopen(request, timeout=60) as response:
+            payload = response.read()
+    except Exception as exc:
+        return {"status": f"error: {exc}"}
+    previous = sorted(folder.glob("*.csv"))
+    if previous and previous[-1].read_bytes() == payload:
+        return {"status": "unchanged", "file": previous[-1].name}
+    folder.mkdir(parents=True, exist_ok=True)
+    target = folder / f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H%MZ')}.csv"
+    target.write_bytes(payload)
+    return {"status": "new", "file": target.name}
+
+
+def parse_fixtures(path: Path, leagues=("E0",)) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """(fixtures, pre-match odds in the long format) of one fixtures snapshot."""
+    frame = read_raw(path)
+    frame = frame[frame.Div.isin(leagues)].copy()
+    dates = _parse_dates(frame["Date"])
+    fixtures = pd.DataFrame({"league": frame.Div, "date": dates.dt.strftime("%Y-%m-%d"), "time": frame.get("Time"),
+                             "home_team": frame.HomeTeam.str.strip(), "away_team": frame.AwayTeam.str.strip()})
+    ids = make_match_ids(frame.Div, dates, frame.HomeTeam, frame.AwayTeam)  # same ids as the season files
+    fixtures.insert(0, "match_id", ids)
+    odds = parse_odds(frame, ids)
+    return fixtures.reset_index(drop=True), odds[odds.is_closing == 0].reset_index(drop=True)
 
 
 def build(root: Path) -> dict:

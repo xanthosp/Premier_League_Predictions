@@ -40,9 +40,10 @@ def load_dataset(root: Path) -> pd.DataFrame:
     return data
 
 
-def weekly_folds(data: pd.DataFrame, league: str, split: str):
-    """Yield (train, test) per week. train: played matches (all leagues) before the week's Monday."""
-    first, last = SPLITS[split]
+def weekly_folds(data: pd.DataFrame, league: str, split):
+    """Yield (train, test) per week. train: played matches (all leagues) before the week's Monday.
+    split: a SPLITS name or a (first, last) season pair."""
+    first, last = SPLITS[split] if isinstance(split, str) else split
     played = data[data.played.astype(bool) & (data.season >= FIRST_TRAIN_SEASON)]
     dates = pd.to_datetime(played.date)
     target = played[(played.league == league) & played.season.between(first, last)]
